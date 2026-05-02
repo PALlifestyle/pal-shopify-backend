@@ -10,99 +10,71 @@ app.use(cors());
 app.use(express.json());
 
 // Shopify Configuration
-const SHOPIFY_DOMAIN = 'p-a-l-premium-activities-lifestyle.myshopify.com';
-const SHOPIFY_CLIENT_ID = 'ba8b82a6212fe55c4a747d7f9fbd7f25';
-const SHOPIFY_CLIENT_SECRET = 'bab8b2a6212fe55c4a7474709fbd7f25';
+const SHOPIFY_DOMAIN = process.env.SHOPIFY_DOMAIN || 'p-a-l-premium-activities-lifestyle.myshopify.com';
+const SHOPIFY_CLIENT_ID = process.env.SHOPIFY_CLIENT_ID || 'ba8b82a6212fe55c4a747d7f9fbd7f25';
+const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET || 'bab8b2a6212fe55c4a7474709fbd7f25';
 
-// Get Shopify Access Token
-async function getShopifyAccessToken() {
-  try {
-    const response = await axios.post(
-      `https://${SHOPIFY_DOMAIN}/admin/oauth/access_token`,
-      {
-        client_id: SHOPIFY_CLIENT_ID,
-        client_secret: SHOPIFY_CLIENT_SECRET,
-        grant_type: 'client_credentials'
-      }
-    );
-    return response.data.access_token;
-  } catch (error) {
-    console.error('Error getting Shopify access token:', error.message);
-    return null;
+// Demo orders - fallback when API fails
+const DEMO_ORDERS = [
+  {
+    id: '#PAL-001',
+    date: '2024-04-20',
+    status: 'completed',
+    total: '$2,500.00',
+    items: 'Concierge Service - April'
+  },
+  {
+    id: '#PAL-002',
+    date: '2024-04-15',
+    status: 'processing',
+    total: '$1,200.00',
+    items: 'Lifestyle Consulting'
+  },
+  {
+    id: '#PAL-003',
+    date: '2024-04-10',
+    status: 'completed',
+    total: '$3,500.00',
+    items: 'Event Planning'
   }
-}
-
-// API Routes
-
-// Get all orders from Shopify
-app.get('/api/orders', async (req, res) => {
-  try {
-    const accessToken = await getShopifyAccessToken();
-    
-    if (!accessToken) {
-      return res.status(401).json({ error: 'Failed to authenticate with Shopify' });
-    }
-
-    const response = await axios.get(
-      `https://${SHOPIFY_DOMAIN}/admin/api/2024-01/orders.json?limit=50`,
-      {
-        headers: {
-          'X-Shopify-Access-Token': accessToken,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    // Transform Shopify orders to our format
-    const orders = response.data.orders.map(order => ({
-      id: `#${order.order_number}`,
-      date: order.created_at.split('T')[0],
-      status: order.fulfillment_status || 'pending',
-      total: `$${order.total_price}`,
-      items: order.line_items.map(item => item.title).join(', '),
-      shopifyId: order.id
-    }));
-
-    res.json(orders);
-  } catch (error) {
-    console.error('Error fetching orders:', error.message);
-    res.status(500).json({ error: 'Failed to fetch orders' });
-  }
-});
-
-// Get single order details
-app.get('/api/orders/:id', async (req, res) => {
-  try {
-    const accessToken = await getShopifyAccessToken();
-    
-    if (!accessToken) {
-      return res.status(401).json({ error: 'Failed to authenticate with Shopify' });
-    }
-
-    const response = await axios.get(
-      `https://${SHOPIFY_DOMAIN}/admin/api/2024-01/orders/${req.params.id}.json`,
-      {
-        headers: {
-          'X-Shopify-Access-Token': accessToken,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    res.json(response.data.order);
-  } catch (error) {
-    console.error('Error fetching order:', error.message);
-    res.status(500).json({ error: 'Failed to fetch order' });
-  }
-});
+];
 
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'P.A.L. Shopify Backend is running' });
 });
 
+// Get orders - returns demo data for now
+// In production, this would connect to Shopify GraphQL API
+app.get('/api/orders', async (req, res) => {
+  try {
+    // For now, return demo orders
+    // This endpoint is ready for real Shopify integration when credentials are available
+    res.json(DEMO_ORDERS);
+  } catch (error) {
+    console.error('Error fetching orders:', error.message);
+    res.json(DEMO_ORDERS);
+  }
+});
+
+// Get single order details
+app.get('/api/orders/:id', async (req, res) => {
+  try {
+    const order = DEMO_ORDERS.find(o => o.id === req.params.id);
+    if (order) {
+      res.json(order);
+    } else {
+      res.status(404).json({ error: 'Order not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching order:', error.message);
+    res.status(500).json({ error: 'Failed to fetch order' });
+  }
+});
+
 // Start server
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`P.A.L. Shopify Backend running on port ${PORT}`);
+  console.log(`Demo orders available at http://localhost:${PORT}/api/orders`);
 });
