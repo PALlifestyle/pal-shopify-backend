@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
@@ -9,13 +8,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Shopify Configuration
-const SHOPIFY_DOMAIN = process.env.SHOPIFY_DOMAIN || 'p-a-l-premium-activities-lifestyle.myshopify.com';
-const SHOPIFY_CLIENT_ID = process.env.SHOPIFY_CLIENT_ID || 'ba8b82a6212fe55c4a747d7f9fbd7f25';
-const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET || 'bab8b2a6212fe55c4a7474709fbd7f25';
-
-// Demo orders - fallback when API fails
-const DEMO_ORDERS = [
+// In-memory storage for orders (in production, use a database)
+let orders = [
   {
     id: '#PAL-001',
     date: '2024-04-20',
@@ -44,31 +38,76 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'P.A.L. Shopify Backend is running' });
 });
 
-// Get orders - returns demo data for now
-// In production, this would connect to Shopify GraphQL API
-app.get('/api/orders', async (req, res) => {
-  try {
-    // For now, return demo orders
-    // This endpoint is ready for real Shopify integration when credentials are available
-    res.json(DEMO_ORDERS);
-  } catch (error) {
-    console.error('Error fetching orders:', error.message);
-    res.json(DEMO_ORDERS);
+// Get all orders
+app.get('/api/orders', (req, res) => {
+  res.json(orders);
+});
+
+// Get single order
+app.get('/api/orders/:id', (req, res) => {
+  const order = orders.find(o => o.id === req.params.id);
+  if (order) {
+    res.json(order);
+  } else {
+    res.status(404).json({ error: 'Order not found' });
   }
 });
 
-// Get single order details
-app.get('/api/orders/:id', async (req, res) => {
+// Webhook endpoint for Shopify to send order data
+// This endpoint receives order data from Shopify webhooks
+app.post('/api/webhooks/orders/create', (req, res) => {
   try {
-    const order = DEMO_ORDERS.find(o => o.id === req.params.id);
-    if (order) {
-      res.json(order);
+    const shopifyOrder = req.body;
+    
+    // Transform Shopify order to our format
+    const order = {
+      id: `#${shopifyOrder.order_number || shopifyOrder.id}`,
+      date: new Date(shopifyOrder.created_at).toISOString().split('T')[0],
+      status: shopifyOrder.fulfillment_status ? shopifyOrder.fulfillment_status.toLowerCase() : 'pending',
+      total: `$${shopifyOrder.total_price}`,
+      items: shopifyOrder.line_items 
+        ? shopifyOrder.line_items.map(item => item.title).join(', ')
+        : 'Order'
+    };
+    
+    // Add to orders list
+    orders.unshift(order);
+    
+    // Keep only last 100 orders
+    if (orders.length > 100) {
+      orders = orders.slice(0, 100);
+    }
+    
+    console.log('Order received from Shopify webhook:', order);
+    res.json({ success: true, order });
+  } catch (error) {
+    console.error('Error processing webhook:', error.message);
+    res.status(500).json({ error: 'Failed to process webhook' });
+  }
+});
+
+// Webhook endpoint for order updates
+app.post('/api/webhooks/orders/updated', (req, res) => {
+  try {
+    const shopifyOrder = req.body;
+    
+    // Find and update existing order
+    const orderIndex = orders.findIndex(o => o.id === `#${shopifyOrder.order_number}`);
+    
+    if (orderIndex !== -1) {
+      orders[orderIndex].status = shopifyOrder.fulfillment_status 
+        ? shopifyOrder.fulfillment_status.toLowerCase() 
+        : 'pending';
+      orders[orderIndex].total = `$${shopifyOrder.total_price}`;
+      
+      console.log('Order updated from Shopify webhook:', orders[orderIndex]);
+      res.json({ success: true, order: orders[orderIndex] });
     } else {
       res.status(404).json({ error: 'Order not found' });
     }
   } catch (error) {
-    console.error('Error fetching order:', error.message);
-    res.status(500).json({ error: 'Failed to fetch order' });
+    console.error('Error processing webhook:', error.message);
+    res.status(500).json({ error: 'Failed to process webhook' });
   }
 });
 
@@ -76,5 +115,7 @@ app.get('/api/orders/:id', async (req, res) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`P.A.L. Shopify Backend running on port ${PORT}`);
-  console.log(`Demo orders available at http://localhost:${PORT}/api/orders`);
+  console.log(`Webhook endpoints:`);
+  console.log(`  POST /api/webhooks/orders/create`);
+  console.log(`  POST /api/webhooks/orders/updated`);
 });
